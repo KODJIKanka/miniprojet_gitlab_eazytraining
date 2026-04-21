@@ -1,0 +1,131 @@
+stages:
+  - build
+  - test
+  - release 
+  - deploy 
+
+variables:
+  IMAGE_NAME: 'mini-projet-gitlab'
+  IMAGE_TAG: 'v1'
+  DOCKER_USERNAME: 'kkanka'
+  # DOCKER_PASSWORD: 
+  HOST_PORT: 80
+  CONTAINER_PORT: 80
+  SERVER_USERNAME: 'ubuntu'
+  #SLACK_WEBHOOK_URL: 'https://hooks.slack.com/services/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'
+
+# Build de l'image 
+Build:
+  stage: build 
+  image: docker:latest
+  services:
+    - name: docker:dind
+      alias: docker 
+  script:
+    - docker build --no-cache -t $IMAGE_NAME:$IMAGE_TAG .
+    - docker save -o mini-projet-gitlab.tar $IMAGE_NAME:$IMAGE_TAG
+    - >
+      curl -X POST -H 'Content-type: application/json' --data '{"text":"Build stage completed successfully"}' $SLACK_WEBHOOK_URL
+  after_script:
+    - >
+      if [ "$CI_JOB_STATUS" != "success" ]; then
+        curl -X POST -H 'Content-type: application/json' --data '{"text":"Build stage failed!"}' $SLACK_WEBHOOK_URL
+      fi
+  artifacts:
+    paths:
+      - mini-projet-gitlab.tar
+
+.test_templates: &test_templates
+  stage: test
+  before_script:
+    - apk add --no-cache curl 
+  script:
+    - docker load -i mini-projet-gitlab.tar
+    - docker run --rm -dp $HOST_PORT:$CONTAINER_PORT --name $IMAGE_NAME $IMAGE_NAME:$IMAGE_TAG
+    - sleep 5 
+    - curl -I "http://docker" | grep -i 200
+    - >
+      curl -X POST -H 'Content-type: application/json' --data '{"text":"Test stage completed successfully"}' $SLACK_WEBHOOK_URL
+  after_script:
+    - >
+      if [ "$CI_JOB_STATUS" != "success" ]; then
+        curl -X POST -H 'Content-type: application/json' --data '{"text":"Test stage failed!"}' $SLACK_WEBHOOK_URL
+      fi
+
+Test:
+  image: docker:latest
+  services:
+    - name: docker:dind
+      alias: docker 
+  <<: *test_templates
+
+
+.release_image: &release_image 
+  stage: release 
+  script:
+    - echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin 
+    - docker load -i mini-projet-gitlab.tar 
+    - docker tag $IMAGE_NAME:$IMAGE_TAG $DOCKER_USERNAME/$IMAGE_NAME:$IMAGE_TAG
+    - >
+      curl -X POST -H 'Content-type: application/json' --data '{"text":"Release stage completed successfully"}' $SLACK_WEBHOOK_URL
+  after_script:
+    - >
+      if [ "$CI_JOB_STATUS" != "success" ]; then
+        curl -X POST -H 'Content-type: application/json' --data '{"text":"Release stage failed!"}' $SLACK_WEBHOOK_URL
+      fi
+
+Release_Image: 
+  image: docker:latest
+  services:
+    - name: docker:dind
+      alias: docker 
+  <<: *release_image
+
+.deploy_app: &deploy_app
+  stage: deploy 
+  before_script:
+    - apk add --no-cache openssh
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | base64 -d > /tmp/id_rsa
+    - chmod 600 /tmp/id_rsa
+    - ssh-add /tmp/id_rsa
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
+  script:
+    - ssh -o StrictHostKeyChecking=no -i /tmp/id_rsa $SERVER_USERNAME@$SERVER_IP "docker pull $DOCKER_USERNAME/$IMAGE_NAME:$IMAGE_TAG"
+    - ssh -o StrictHostKeyChecking=no -i /tmp/id_rsa $SERVER_USERNAME@$SERVER_IP "docker run --rm -dp $HOST_PORT:$CONTAINER_PORT --name $IMAGE_NAME $DOCKER_USERNAME/$IMAGE_NAME:$IMAGE_TAG"
+    - >
+      curl -X POST -H 'Content-type: application/json' --data '{"text":"Deploy stage completed successfully"}' $SLACK_WEBHOOK_URL
+  after_script:
+    - >
+      if [ "$CI_JOB_STATUS" != "success" ]; then
+        curl -X POST -H 'Content-type: application/json' --data '{"text":"Deploy stage failed!"}' $SLACK_WEBHOOK_URL
+      fi
+
+Deploy_Review:
+  stage: deploy 
+  variables:
+    SERVER_IP: '13.60.12.161'
+  image: alpine
+  <<: *deploy_app
+  environment:
+    name: Review 
+
+Deploy_Staging:
+  stage: deploy 
+  variables:
+    SERVER_IP: '13.51.109.134'
+  image: alpine
+  <<: *deploy_app
+  environment:
+    name: Staging
+
+Deploy_Production:
+  stage: deploy 
+  variables:
+    SERVER_IP: '16.171.150.195'
+  image: alpine
+  <<: *deploy_app
+  environment:
+    name: Production 
