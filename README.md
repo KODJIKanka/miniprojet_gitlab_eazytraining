@@ -122,7 +122,7 @@ Déploiement automatique de l'application sur l'infrastructure AWS, selon trois 
 
 ## 👤 Auteur
 
-**Paul KODJI DJABA**  
+**Paul KODJI KANKA**  
 Formation EazyTraining – DevOps / Cloud AWS
 
 ---
